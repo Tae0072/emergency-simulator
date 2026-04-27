@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>응급구조 통합 시스템 시뮬레이터 - 부산</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React 18 -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!--
+    Kakao Map SDK
+    중요: 아래 '05320b13b7093c7a2509a0de3b43a0eb'를 본인의 Kakao JavaScript 키로 교체하세요.
+    발급: https://developers.kakao.com/ → 내 애플리케이션 → JavaScript 키
+    플랫폼 등록: Web 플랫폼에 file:// 또는 사용할 도메인 추가
+  -->
+  <script type="text/javascript"
+          src="//dapi.kakao.com/v2/maps/sdk.js?appkey=05320b13b7093c7a2509a0de3b43a0eb&autoload=false"></script>
+
+  <style>
+    body {
+      font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: #1f2937; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+    @keyframes pulse-red {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+      50% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+    }
+    .pulse-red { animation: pulse-red 1.5s infinite; }
+    @keyframes pulse-orange {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.7); }
+      50% { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+    }
+    .pulse-orange { animation: pulse-orange 1.5s infinite; }
+    .marker-vehicle {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      border: 2px solid white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .marker-incident {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: #ef4444;
+      display: flex; align-items: center; justify-content: center;
+      color: white;
+      font-size: 18px;
+      font-weight: bold;
+      border: 3px solid white;
+    }
+    .marker-hospital {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      background: white;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      border: 2px solid #3b82f6;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .marker-signal {
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-white">
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+
+// ============================================================================
+// 부산 자원 더미 데이터
+// ============================================================================
+const HOSPITALS = [
+  { id: 'busan-baek',  name: '부산백병원',     lat: 35.1564, lng: 129.0608, beds: 3, specialty: ['심혈관', '응급'] },
+  { id: 'busan-univ',  name: '부산대학교병원', lat: 35.1218, lng: 129.0240, beds: 5, specialty: ['외상', '심혈관', '뇌혈관', '응급'] },
+  { id: 'dong-a',      name: '동아대학교병원', lat: 35.1180, lng: 129.0410, beds: 2, specialty: ['외상', '응급'] },
+  { id: 'haeundae',    name: '해운대백병원',   lat: 35.1685, lng: 129.1733, beds: 4, specialty: ['심혈관', '응급'] },
+  { id: 'inje',        name: '인제대 부산백병원', lat: 35.1538, lng: 129.0570, beds: 3, specialty: ['외상', '응급'] },
+];
+
+const AMBULANCES = [
+  // 해운대구
+  { id: 'BS-HD-AMB-03', district: '해운대구', type: 'special', lat: 35.1631, lng: 129.1635 },
+  { id: 'BS-HD-AMB-07', district: '해운대구', type: 'general', lat: 35.1720, lng: 129.1780 },
+  // 사하구
+  { id: 'BS-SH-AMB-01', district: '사하구',   type: 'special', lat: 35.1040, lng: 128.9740 },
+  { id: 'BS-SH-AMB-04', district: '사하구',   type: 'general', lat: 35.0950, lng: 128.9650 },
+  // 부산진구
+  { id: 'BS-BJ-AMB-02', district: '부산진구', type: 'general', lat: 35.1600, lng: 129.0530 },
+  { id: 'BS-BJ-AMB-05', district: '부산진구', type: 'special', lat: 35.1700, lng: 129.0600 },
+  // 동래구
+  { id: 'BS-DR-AMB-01', district: '동래구',   type: 'general', lat: 35.2050, lng: 129.0840 },
+  // 연제구 (동래구 인접 - 자원 동원 시 사용)
+  { id: 'BS-YJ-AMB-01', district: '연제구',   type: 'special', lat: 35.1770, lng: 129.0760 },
+  // 강서구
+  { id: 'BS-GS-AMB-01', district: '강서구',   type: 'general', lat: 35.2120, lng: 128.9810 },
+  // 사상구 (낙동강 시나리오용)
+  { id: 'BS-SS-AMB-02', district: '사상구',   type: 'general', lat: 35.1530, lng: 128.9920 },
+];
+
+const MOTORCYCLES = [
+  { id: 'BS-HD-MOTO-01', district: '해운대구', lat: 35.1640, lng: 129.1640 },
+  { id: 'BS-HD-MOTO-02', district: '해운대구', lat: 35.1650, lng: 129.1660 },
+  { id: 'BS-SH-MOTO-01', district: '사하구',   lat: 35.1030, lng: 128.9750 },
+  { id: 'BS-SH-MOTO-02', district: '사하구',   lat: 35.1060, lng: 128.9720 },
+  { id: 'BS-BJ-MOTO-01', district: '부산진구', lat: 35.1620, lng: 129.0540 },
+  { id: 'BS-DR-MOTO-01', district: '동래구',   lat: 35.2060, lng: 129.0850 },
+  { id: 'BS-DR-MOTO-02', district: '동래구',   lat: 35.2070, lng: 129.0860 },
+];
+
+const SIGNALS = [
+  { id: 'BS-HD-101', lat: 35.1640, lng: 129.1500 },
+  { id: 'BS-HD-102', lat: 35.1620, lng: 129.1300 },
+  { id: 'BS-HD-103', lat: 35.1590, lng: 129.1100 },
+  { id: 'BS-HD-104', lat: 35.1570, lng: 129.0900 },
+  { id: 'BS-DR-201', lat: 35.1900, lng: 129.0780 },
+  { id: 'BS-DR-202', lat: 35.1800, lng: 129.0700 },
+  { id: 'BS-SH-301', lat: 35.1100, lng: 128.9800 },
+];
+
+// ============================================================================
+// 시나리오 타임라인
+// ============================================================================
+// 각 이벤트는 시나리오 시작 후 경과 시간(초) 기준으로 발생.
+// 시간 가속 재생 가능 (1x, 2x, 4x).
+// ============================================================================
+
+const SCENARIO_1 = {
+  id: 1,
+  title: "시나리오 1 — 전화 신고 1급 자동 디스패치",
+  description: "심정지 의심 환자. Layer 1 키워드로 2초 만에 자동 출동.",
+  duration: 60,
+  incidentLocation: { lat: 35.1631, lng: 129.1635, district: '해운대구' },
+  events: [
+    { time: 0, type: 'INCIDENT', message: '📞 119 전화 수신', detail: '"아버지가 쓰러지셨어요! 숨을 안 쉬어요!"' },
+    { time: 1, type: 'STT_START', message: '🎙️ STT 실시간 전사 시작' },
+    { time: 2, type: 'KEYWORD_TRIGGER', message: '🚨 [Layer 1] 키워드 "숨을 안 쉬어요" 감지 → 1급 자동 출동',
+      ktas: 1 },
+    { time: 2, type: 'DISPATCH', message: '🚑 BS-HD-AMB-03 출동 (특수, 1급 구조사)',
+      vehicleId: 'BS-HD-AMB-03', destination: { lat: 35.1631, lng: 129.1635 } },
+    { time: 2, type: 'DISPATCH', message: '🏍️ BS-HD-MOTO-01 출동 (선두)',
+      vehicleId: 'BS-HD-MOTO-01', destination: { lat: 35.1631, lng: 129.1635 } },
+    { time: 2, type: 'DISPATCH', message: '🏍️ BS-HD-MOTO-02 출동 (후미)',
+      vehicleId: 'BS-HD-MOTO-02', destination: { lat: 35.1631, lng: 129.1635 } },
+    { time: 4, type: 'AI_CLASSIFY', message: '🤖 AI 분류 결과: 1급, 심정지 의심, 확신도 96%' },
+    { time: 5, type: 'HOSPITAL_MATCH', message: '🏥 부산백병원 심혈관센터 매칭 (ETA 4분)',
+      hospitalId: 'busan-baek' },
+    { time: 6, type: 'EMERGENCY_DOC_NOTIFY', message: '👨‍⚕️ 응급의 사전 알림 전송' },
+    { time: 8, type: 'CPR_GUIDE', message: '📋 상담원에게 CPR 안내 스크립트 표시' },
+    { time: 15, type: 'SIGNAL_PRIORITY', message: '🚦 신호등 우선신호 활성: BS-HD-101',
+      signalId: 'BS-HD-101' },
+    { time: 18, type: 'SIGNAL_PRIORITY', message: '🚦 신호등 우선신호 활성: BS-HD-102',
+      signalId: 'BS-HD-102' },
+    { time: 30, type: 'PROGRESS', message: '🚑 구급차 현장 도착 진행 중...' },
+    { time: 40, type: 'ARRIVE_INCIDENT', message: '✅ 구급차 현장 도착, 바디캠 ON' },
+    { time: 42, type: 'BODYCAM', message: '📹 응급의 실시간 연결 (4분할 화면)' },
+    { time: 50, type: 'TRANSPORT', message: '🚑 환자 탑승, 부산백병원 이송 시작' },
+    { time: 58, type: 'ARRIVE_HOSPITAL', message: '🏥 병원 도착, 응급실 인계 완료',
+      hospitalId: 'busan-baek' },
+    { time: 60, type: 'COMPLETE', message: '✅ 시나리오 완료. 총 소요 시간: 60초 (실제 환산 시 약 8분)' },
+  ]
+};
+
+const SCENARIO_2 = {
+  id: 2,
+  title: "시나리오 2 — 동시 다발 5건 처리",
+  description: "부산 5개 구에서 동시 발생. Level 2 자원 풀 동원 (관할 무시).",
+  duration: 70,
+  events: [
+    { time: 0, type: 'INCIDENT', message: '🚨 [14:00] 해운대 1급 (심정지)',
+      location: { lat: 35.1631, lng: 129.1635 }, ktas: 1 },
+    { time: 1, type: 'DISPATCH', message: '🚑 BS-HD-AMB-03 + 싸이카 2대 출동 (해운대)',
+      vehicleId: 'BS-HD-AMB-03', destination: { lat: 35.1631, lng: 129.1635 } },
+    { time: 1, type: 'DISPATCH', vehicleId: 'BS-HD-MOTO-01', destination: { lat: 35.1631, lng: 129.1635 } },
+    { time: 1, type: 'DISPATCH', vehicleId: 'BS-HD-MOTO-02', destination: { lat: 35.1631, lng: 129.1635 } },
+
+    { time: 5, type: 'INCIDENT', message: '🚨 [14:00] 사하구 1급 (교통사고 다발, MCI)',
+      location: { lat: 35.1040, lng: 128.9740 }, ktas: 1 },
+    { time: 6, type: 'DISPATCH', message: '🚑 BS-SH-AMB-01 + 싸이카 2대 출동 (사하구)',
+      vehicleId: 'BS-SH-AMB-01', destination: { lat: 35.1040, lng: 128.9740 } },
+    { time: 6, type: 'DISPATCH', vehicleId: 'BS-SH-MOTO-01', destination: { lat: 35.1040, lng: 128.9740 } },
+    { time: 6, type: 'DISPATCH', vehicleId: 'BS-SH-MOTO-02', destination: { lat: 35.1040, lng: 128.9740 } },
+    { time: 8, type: 'PROTOCOL', message: '⚠️ MCI 프로토콜 활성화 (다수 사상자)' },
+
+    { time: 12, type: 'INCIDENT', message: '🚨 [14:01] 부산진구 2급 (흉통)',
+      location: { lat: 35.1600, lng: 129.0530 }, ktas: 2 },
+    { time: 13, type: 'DISPATCH', message: '🚑 BS-BJ-AMB-02 + 싸이카 1대 출동 (부산진구)',
+      vehicleId: 'BS-BJ-AMB-02', destination: { lat: 35.1600, lng: 129.0530 } },
+    { time: 13, type: 'DISPATCH', vehicleId: 'BS-BJ-MOTO-01', destination: { lat: 35.1600, lng: 129.0530 } },
+
+    { time: 20, type: 'INCIDENT', message: '🚨 [14:02] 동래구 1급 (낙상 의식소실)',
+      location: { lat: 35.2050, lng: 129.0840 }, ktas: 1 },
+    { time: 21, type: 'WARNING', message: '⚠️ 동래구 가용 특수 구급차 0대' },
+    { time: 22, type: 'POOL_LEVEL_UP', message: '🔄 Level 2 자원 풀 동원: 인접 연제구 검색', level: 2 },
+    { time: 23, type: 'DISPATCH', message: '🚑 BS-YJ-AMB-01 동원 (연제구 → 동래구) ⭐ 관할 무시',
+      vehicleId: 'BS-YJ-AMB-01', destination: { lat: 35.2050, lng: 129.0840 }, crossDistrict: true },
+    { time: 23, type: 'DISPATCH', vehicleId: 'BS-DR-MOTO-01', destination: { lat: 35.2050, lng: 129.0840 } },
+    { time: 23, type: 'DISPATCH', vehicleId: 'BS-DR-MOTO-02', destination: { lat: 35.2050, lng: 129.0840 } },
+
+    { time: 30, type: 'INCIDENT', message: '🚨 [14:03] 강서구 3급 (열상)',
+      location: { lat: 35.2120, lng: 128.9810 }, ktas: 3 },
+    { time: 31, type: 'DISPATCH', message: '🚑 BS-GS-AMB-01 출동 (강서구)',
+      vehicleId: 'BS-GS-AMB-01', destination: { lat: 35.2120, lng: 128.9810 } },
+
+    { time: 45, type: 'STATUS', message: '📊 5건 동시 처리 중. 자원 사용률 72%' },
+    { time: 60, type: 'STATUS', message: '✅ 모든 신고 골든타임 내 처리. 관할 무시 동원: 1건' },
+    { time: 70, type: 'COMPLETE', message: '✅ 시나리오 완료. Level 2 자원 풀이 정상 동작 확인.' },
+  ]
+};
+
+const SCENARIO_3 = {
+  id: 3,
+  title: "시나리오 3 — 동적 재라우팅 (사고 자동 회피)",
+  description: "이송 중 경로 상 사고 발생. 자동 우회 경로 산출 + 신호등 재조정.",
+  duration: 50,
+  incidentLocation: { lat: 35.1700, lng: 129.1500, district: '해운대구' },
+  events: [
+    { time: 0, type: 'INCIDENT', message: '🚨 KTAS 2급 흉통 환자 신고 (해운대)' },
+    { time: 2, type: 'DISPATCH', message: '🚑 BS-HD-AMB-07 + 싸이카 1대 출동',
+      vehicleId: 'BS-HD-AMB-07', destination: { lat: 35.1700, lng: 129.1500 } },
+    { time: 2, type: 'DISPATCH', vehicleId: 'BS-HD-MOTO-01', destination: { lat: 35.1700, lng: 129.1500 } },
+    { time: 5, type: 'HOSPITAL_MATCH', message: '🏥 부산백병원 매칭, ETA 8분',
+      hospitalId: 'busan-baek' },
+    { time: 8, type: 'SIGNAL_PRIORITY', message: '🚦 신호등 BS-HD-101 우선신호',
+      signalId: 'BS-HD-101' },
+    { time: 10, type: 'SIGNAL_PRIORITY', message: '🚦 신호등 BS-HD-102 우선신호',
+      signalId: 'BS-HD-102' },
+    { time: 15, type: 'ARRIVE_INCIDENT', message: '🚑 환자 탑승, 이송 시작' },
+    { time: 25, type: 'TRAFFIC_ALERT', message: '⚠️ 카카오 교통 API: 도시고속도로 사고 발생' },
+    { time: 26, type: 'REROUTE', message: '🔄 자동 재계산: 우회 경로 A 선택 (ETA 9분)' },
+    { time: 27, type: 'SIGNAL_REVERT', message: '🚦 BS-HD-101 정상 모드 복귀',
+      signalId: 'BS-HD-101' },
+    { time: 27, type: 'SIGNAL_PRIORITY', message: '🚦 BS-HD-103 우선신호 활성 (새 경로)',
+      signalId: 'BS-HD-103' },
+    { time: 27, type: 'SIGNAL_PRIORITY', message: '🚦 BS-HD-104 우선신호 활성 (새 경로)',
+      signalId: 'BS-HD-104' },
+    { time: 28, type: 'DRIVER_ALERT', message: '🔊 운전자 음성 안내: "전방 사고, 우회로로 변경합니다"' },
+    { time: 30, type: 'V2X_ALERT', message: '📡 V2X: 새 경로 차량들에게 양보 알림 송출' },
+    { time: 45, type: 'ARRIVE_HOSPITAL', message: '🏥 병원 도착 (재라우팅 덕분에 ETA 14분 → 9분)',
+      hospitalId: 'busan-baek' },
+    { time: 50, type: 'COMPLETE', message: '✅ 시나리오 완료. 동적 재라우팅 정상 동작.' },
+  ]
+};
+
+const SCENARIO_4 = {
+  id: 4,
+  title: "시나리오 4 — 낙동강 구조 (해양구조대 + 구급차 양안 대기)",
+  description: "야간 강풍으로 헬기 사용 불가. 해양구조대 보트 + 강 양쪽 구급차 대기.",
+  duration: 60,
+  incidentLocation: { lat: 35.1700, lng: 128.9700, district: '강서구' },
+  events: [
+    { time: 0, type: 'INCIDENT', message: '🚨 119 신고: "낙동강 다리 밑에서 사람이 떨어졌어요"' },
+    { time: 2, type: 'AI_CLASSIFY', message: '🤖 AI 분류: 1급 (익수 의심)' },
+    { time: 3, type: 'CONTEXT', message: '🌊 환경 분석: 강 (낙동강) → 해양구조대 관할' },
+    { time: 4, type: 'CONTEXT', message: '🌪️ 야간 + 강풍 → 헬기 사용 불가' },
+    { time: 4, type: 'CONTEXT', message: '🌉 위치: 다리 밑 → 헬기 이착륙 불가' },
+    { time: 6, type: 'MARITIME_DISPATCH', message: '🚤 해양구조대 보트 출동' },
+    { time: 7, type: 'DISPATCH', message: '🚑 BS-GS-AMB-01 출동 (강서구 측 강변 대기)',
+      vehicleId: 'BS-GS-AMB-01', destination: { lat: 35.1700, lng: 128.9700 } },
+    { time: 7, type: 'DISPATCH', message: '🚑 BS-SS-AMB-02 출동 (사상구 측 강변 대기)',
+      vehicleId: 'BS-SS-AMB-02', destination: { lat: 35.1700, lng: 128.9750 } },
+    { time: 25, type: 'STATUS', message: '🚤 해양구조대 구조 진행 중...' },
+    { time: 35, type: 'DECISION', message: '✅ 해양구조대 판단: 사상구 측 강변 인계' },
+    { time: 36, type: 'DEACTIVATE', message: '🔄 BS-GS-AMB-01 대기 해제, 자원 풀 복귀',
+      vehicleId: 'BS-GS-AMB-01' },
+    { time: 38, type: 'TRANSPORT', message: '🚑 BS-SS-AMB-02 환자 인계 → 부산백병원 이송 시작',
+      vehicleId: 'BS-SS-AMB-02' },
+    { time: 55, type: 'ARRIVE_HOSPITAL', message: '🏥 병원 도착',
+      hospitalId: 'busan-baek' },
+    { time: 60, type: 'COMPLETE', message: '✅ 시나리오 완료. 강 특수 운영 정책 정상 동작.' },
+  ]
+};
+
+const SCENARIOS = [SCENARIO_1, SCENARIO_2, SCENARIO_3, SCENARIO_4];
+
+// ============================================================================
+// 유틸: 좌표 보간 (출발 → 목적지 진행률 기반)
+// ============================================================================
+function interpolate(from, to, progress) {
+  const p = Math.max(0, Math.min(1, progress));
+  return {
+    lat: from.lat + (to.lat - from.lat) * p,
+    lng: from.lng + (to.lng - from.lng) * p,
+  };
+}
+
+// ============================================================================
+// Map 컴포넌트 (Kakao Map 래퍼)
+// ============================================================================
+const { useState, useEffect, useRef, useCallback } = React;
+
+function KakaoMap({ vehicleStates, signalStates, incidents, hospitals }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef({ vehicles: {}, signals: {}, incidents: {}, hospitals: {} });
+
+  // 지도 초기화
+  useEffect(() => {
+    if (!window.kakao || !window.kakao.maps) {
+      mapRef.current.innerHTML = `
+        <div class="flex items-center justify-center h-full text-yellow-500 p-8 text-center">
+          <div>
+            ⚠️ Kakao Map API 키가 설정되지 않았습니다.<br/>
+            HTML 파일의 '05320b13b7093c7a2509a0de3b43a0eb' 부분을 본인 키로 교체하세요.<br/>
+            발급: https://developers.kakao.com/
+          </div>
+        </div>`;
+      return;
+    }
+
+    window.kakao.maps.load(() => {
+      const options = {
+        center: new window.kakao.maps.LatLng(35.158, 129.06), // 부산 중심
+        level: 9, // 줌 레벨 (낮을수록 상세)
+      };
+      mapInstanceRef.current = new window.kakao.maps.Map(mapRef.current, options);
+
+      // 병원 마커 초기 표시
+      hospitals.forEach(h => {
+        const marker = createCustomMarker(
+          new window.kakao.maps.LatLng(h.lat, h.lng),
+          `<div class="marker-hospital">🏥</div>`,
+          mapInstanceRef.current
+        );
+        markersRef.current.hospitals[h.id] = marker;
+      });
+    });
+  }, []);
+
+  // 차량 마커 갱신
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.kakao) return;
+    Object.entries(vehicleStates).forEach(([vehicleId, state]) => {
+      const existing = markersRef.current.vehicles[vehicleId];
+      const position = new window.kakao.maps.LatLng(state.lat, state.lng);
+      const isAmb = vehicleId.includes('AMB');
+      const icon = isAmb ? '🚑' : '🏍️';
+      const bg = state.status === 'available' ? '#10b981' :
+                 state.status === 'dispatched' ? '#f97316' :
+                 state.status === 'transporting' ? '#ef4444' : '#6b7280';
+      const pulse = state.status === 'transporting' ? 'pulse-red' :
+                    state.status === 'dispatched' ? 'pulse-orange' : '';
+      const html = `<div class="marker-vehicle ${pulse}" style="background:${bg}">${icon}</div>`;
+
+      if (existing) {
+        existing.setPosition(position);
+        existing.getContent().innerHTML = html.replace(/^<div /, '<div ');
+        // 단순화: 기존 오버레이 갱신
+        existing.setMap(null);
+        markersRef.current.vehicles[vehicleId] = createCustomMarker(position, html, mapInstanceRef.current);
+      } else {
+        markersRef.current.vehicles[vehicleId] = createCustomMarker(position, html, mapInstanceRef.current);
+      }
+    });
+  }, [vehicleStates]);
+
+  // 신호등 마커 갱신
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.kakao) return;
+    Object.entries(signalStates).forEach(([signalId, state]) => {
+      const signal = SIGNALS.find(s => s.id === signalId);
+      if (!signal) return;
+      const existing = markersRef.current.signals[signalId];
+      const position = new window.kakao.maps.LatLng(signal.lat, signal.lng);
+      const bg = state === 'priority' ? '#10b981' : '#9ca3af';
+      const pulse = state === 'priority' ? 'pulse-orange' : '';
+      const html = `<div class="marker-signal ${pulse}" style="background:${bg}"></div>`;
+
+      if (existing) existing.setMap(null);
+      markersRef.current.signals[signalId] = createCustomMarker(position, html, mapInstanceRef.current);
+    });
+  }, [signalStates]);
+
+  // 신고 위치 마커
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.kakao) return;
+    // 기존 신고 마커 제거
+    Object.values(markersRef.current.incidents).forEach(m => m.setMap(null));
+    markersRef.current.incidents = {};
+    incidents.forEach((inc, idx) => {
+      const position = new window.kakao.maps.LatLng(inc.lat, inc.lng);
+      const html = `<div class="marker-incident pulse-red">!</div>`;
+      markersRef.current.incidents[idx] = createCustomMarker(position, html, mapInstanceRef.current);
+    });
+  }, [incidents]);
+
+  return <div ref={mapRef} className="w-full h-full bg-gray-800" />;
+}
+
+// 커스텀 오버레이 헬퍼
+function createCustomMarker(position, html, map) {
+  const content = document.createElement('div');
+  content.innerHTML = html;
+  const overlay = new window.kakao.maps.CustomOverlay({
+    position: position,
+    content: content,
+    yAnchor: 0.5,
+    xAnchor: 0.5,
+  });
+  overlay.setMap(map);
+  // CustomOverlay는 getContent가 없으므로 직접 setMap으로만 처리
+  return overlay;
+}
+
+// ============================================================================
+// Sidebar — 좌측 정보 패널
+// ============================================================================
+function Sidebar({ resourceStats, activeIncidents, poolLevel, currentTime }) {
+  return (
+    <div className="w-80 bg-gray-800 p-4 overflow-y-auto scrollbar-thin border-r border-gray-700">
+      {/* 시간 */}
+      <div className="mb-4 p-3 bg-gray-900 rounded">
+        <div className="text-xs text-gray-400">시뮬레이션 시간</div>
+        <div className="text-2xl font-mono text-cyan-400">
+          {Math.floor(currentTime / 60).toString().padStart(2, '0')}:
+          {(currentTime % 60).toString().padStart(2, '0')}
+        </div>
+      </div>
+
+      {/* 자원 현황 */}
+      <div className="mb-4">
+        <h3 className="text-sm font-bold mb-2 text-gray-300">🚑 자원 현황</h3>
+        <div className="bg-gray-900 rounded p-3 space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-400">구급차 가용</span>
+            <span className="text-green-400 font-mono">{resourceStats.ambAvailable}/{resourceStats.ambTotal}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">구급차 출동</span>
+            <span className="text-orange-400 font-mono">{resourceStats.ambDispatched}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">싸이카 가용</span>
+            <span className="text-green-400 font-mono">{resourceStats.motoAvailable}/{resourceStats.motoTotal}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">싸이카 출동</span>
+            <span className="text-orange-400 font-mono">{resourceStats.motoDispatched}</span>
+          </div>
+          <div className="border-t border-gray-700 pt-2 mt-2">
+            <div className="flex justify-between">
+              <span className="text-gray-400">자원 사용률</span>
+              <span className={`font-mono ${resourceStats.utilization > 0.7 ? 'text-red-400' : 'text-cyan-400'}`}>
+                {(resourceStats.utilization * 100).toFixed(0)}%
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 자원 풀 Level */}
+      <div className="mb-4">
+        <h3 className="text-sm font-bold mb-2 text-gray-300">🔄 자원 풀 단계</h3>
+        <div className="bg-gray-900 rounded p-3 space-y-1 text-sm">
+          {[1, 2, 3, 4, 5].map(lv => (
+            <div key={lv} className={`flex items-center gap-2 ${poolLevel >= lv ? 'text-yellow-400' : 'text-gray-600'}`}>
+              <span>{poolLevel >= lv ? '●' : '○'}</span>
+              <span className="text-xs">
+                Level {lv}: {
+                  lv === 1 ? '관할 지역' :
+                  lv === 2 ? '인접 구·군' :
+                  lv === 3 ? '부산 광역' :
+                  lv === 4 ? '인근 광역시·도' : '전국'
+                }
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 활성 신고 */}
+      <div className="mb-4">
+        <h3 className="text-sm font-bold mb-2 text-gray-300">🚨 활성 신고</h3>
+        <div className="bg-gray-900 rounded p-3 space-y-2 text-sm">
+          {activeIncidents.length === 0 ? (
+            <div className="text-gray-500 text-xs">활성 신고 없음</div>
+          ) : (
+            activeIncidents.map((inc, idx) => (
+              <div key={idx} className="flex justify-between border-b border-gray-800 pb-1 last:border-0">
+                <span className="text-gray-300 text-xs">{inc.district || '신고'}</span>
+                <span className={`text-xs font-mono px-2 py-0.5 rounded ${
+                  inc.ktas === 1 ? 'bg-red-900 text-red-200' :
+                  inc.ktas === 2 ? 'bg-orange-900 text-orange-200' :
+                  inc.ktas === 3 ? 'bg-yellow-900 text-yellow-200' : 'bg-gray-700 text-gray-300'
+                }`}>
+                  {inc.ktas}급
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 범례 */}
+      <div className="mb-4">
+        <h3 className="text-sm font-bold mb-2 text-gray-300">📍 범례</h3>
+        <div className="bg-gray-900 rounded p-3 space-y-1 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-green-500"></span>
+            <span className="text-gray-400">대기 중</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-orange-500"></span>
+            <span className="text-gray-400">출동 중</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-red-500"></span>
+            <span className="text-gray-400">이송 중</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded-full bg-gray-500"></span>
+            <span className="text-gray-400">정비 중</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// LogPanel — 우측 실시간 로그
+// ============================================================================
+function LogPanel({ logs }) {
+  const logsEndRef = useRef(null);
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  return (
+    <div className="w-96 bg-gray-800 p-4 border-l border-gray-700 flex flex-col">
+      <h3 className="text-sm font-bold mb-2 text-gray-300">📋 실시간 이벤트 로그</h3>
+      <div className="flex-1 overflow-y-auto scrollbar-thin bg-gray-900 rounded p-3 text-xs font-mono space-y-1">
+        {logs.length === 0 ? (
+          <div className="text-gray-500">시나리오를 시작하면 이벤트가 표시됩니다.</div>
+        ) : (
+          logs.map((log, idx) => (
+            <div key={idx} className="border-b border-gray-800 pb-1 last:border-0">
+              <span className="text-cyan-500">[{formatTime(log.time)}]</span>{' '}
+              <span className="text-gray-200">{log.message}</span>
+              {log.detail && <div className="text-gray-500 ml-12 text-[10px] italic">{log.detail}</div>}
+            </div>
+          ))
+        )}
+        <div ref={logsEndRef} />
+      </div>
+    </div>
+  );
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const s = (seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+// ============================================================================
+// Controls — 하단 컨트롤
+// ============================================================================
+function Controls({ scenarios, currentScenario, isPlaying, speed, onSelect, onPlayPause, onStop, onSpeedChange, onCustomReport }) {
+  return (
+    <div className="bg-gray-800 border-t border-gray-700 p-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* 시나리오 선택 */}
+        <div className="flex gap-1 flex-wrap">
+          {scenarios.map(s => (
+            <button
+              key={s.id}
+              onClick={() => onSelect(s)}
+              className={`px-3 py-2 rounded text-xs font-bold transition ${
+                currentScenario?.id === s.id
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              }`}
+            >
+              ▶ {s.title.split('—')[0].trim()}
+            </button>
+          ))}
+        </div>
+
+        <div className="w-px h-8 bg-gray-700"></div>
+
+        {/* 재생 컨트롤 */}
+        <button
+          onClick={onPlayPause}
+          disabled={!currentScenario}
+          className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded text-sm font-bold"
+        >
+          {isPlaying ? '⏸ 일시정지' : '▶ 재생'}
+        </button>
+        <button
+          onClick={onStop}
+          disabled={!currentScenario}
+          className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded text-sm font-bold"
+        >
+          ⏹ 정지
+        </button>
+
+        <div className="w-px h-8 bg-gray-700"></div>
+
+        {/* 속도 조절 */}
+        <span className="text-xs text-gray-400">속도:</span>
+        {[1, 2, 4, 8].map(s => (
+          <button
+            key={s}
+            onClick={() => onSpeedChange(s)}
+            className={`px-3 py-1 rounded text-xs ${
+              speed === s ? 'bg-cyan-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+          >
+            {s}x
+          </button>
+        ))}
+
+        <div className="w-px h-8 bg-gray-700"></div>
+
+        {/* 사용자 직접 신고 */}
+        <button
+          onClick={onCustomReport}
+          className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-bold"
+        >
+          📞 직접 신고하기
+        </button>
+      </div>
+
+      {/* 시나리오 설명 */}
+      {currentScenario && (
+        <div className="mt-2 text-xs text-gray-400 italic">
+          💡 {currentScenario.description}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// 사용자 직접 신고 모달
+// ============================================================================
+function CustomReportModal({ isOpen, onClose, onSubmit }) {
+  const [district, setDistrict] = useState('해운대구');
+  const [ktas, setKtas] = useState(1);
+  const [keyword, setKeyword] = useState('숨을 안 쉬어요');
+
+  if (!isOpen) return null;
+
+  const districtCoords = {
+    '해운대구': { lat: 35.1631, lng: 129.1635 },
+    '사하구':   { lat: 35.1040, lng: 128.9740 },
+    '부산진구': { lat: 35.1600, lng: 129.0530 },
+    '동래구':   { lat: 35.2050, lng: 129.0840 },
+    '강서구':   { lat: 35.2120, lng: 128.9810 },
+  };
+
+  const handleSubmit = () => {
+    onSubmit({
+      location: districtCoords[district],
+      district,
+      ktas,
+      keyword,
+    });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-gray-800 rounded-lg p-6 w-96">
+        <h3 className="text-lg font-bold mb-4 text-white">📞 직접 신고 발생</h3>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">발생 지역</label>
+            <select
+              value={district}
+              onChange={e => setDistrict(e.target.value)}
+              className="w-full bg-gray-900 text-white rounded p-2 text-sm"
+            >
+              {Object.keys(districtCoords).map(d => <option key={d}>{d}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">KTAS 등급</label>
+            <div className="flex gap-2">
+              {[1, 2, 3, 4, 5].map(k => (
+                <button
+                  key={k}
+                  onClick={() => setKtas(k)}
+                  className={`flex-1 py-2 rounded text-sm font-bold ${
+                    ktas === k
+                      ? k === 1 ? 'bg-red-600 text-white' :
+                        k === 2 ? 'bg-orange-600 text-white' :
+                        k === 3 ? 'bg-yellow-600 text-white' :
+                        'bg-gray-600 text-white'
+                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                  }`}
+                >
+                  {k}급
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">신고 키워드 (자유 입력)</label>
+            <input
+              type="text"
+              value={keyword}
+              onChange={e => setKeyword(e.target.value)}
+              className="w-full bg-gray-900 text-white rounded p-2 text-sm"
+              placeholder="예: 숨을 안 쉬어요"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-6">
+          <button onClick={onClose} className="flex-1 py-2 bg-gray-700 text-white rounded text-sm">취소</button>
+          <button onClick={handleSubmit} className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm font-bold">
+            🚨 신고 발생
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// App — 메인 컴포넌트
+// ============================================================================
+function App() {
+  const [currentScenario, setCurrentScenario] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speed, setSpeed] = useState(2);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [logs, setLogs] = useState([]);
+  const [vehicleStates, setVehicleStates] = useState({});
+  const [signalStates, setSignalStates] = useState({});
+  const [incidents, setIncidents] = useState([]);
+  const [activeIncidents, setActiveIncidents] = useState([]);
+  const [poolLevel, setPoolLevel] = useState(1);
+  const [showReportModal, setShowReportModal] = useState(false);
+
+  // 차량 상태 초기화
+  useEffect(() => {
+    const initial = {};
+    [...AMBULANCES, ...MOTORCYCLES].forEach(v => {
+      initial[v.id] = { lat: v.lat, lng: v.lng, status: 'available', origin: { lat: v.lat, lng: v.lng } };
+    });
+    setVehicleStates(initial);
+  }, []);
+
+  // 자원 통계
+  const resourceStats = {
+    ambTotal: AMBULANCES.length,
+    motoTotal: MOTORCYCLES.length,
+    ambAvailable: Object.entries(vehicleStates).filter(([id, s]) => id.includes('AMB') && s.status === 'available').length,
+    ambDispatched: Object.entries(vehicleStates).filter(([id, s]) => id.includes('AMB') && s.status !== 'available').length,
+    motoAvailable: Object.entries(vehicleStates).filter(([id, s]) => id.includes('MOTO') && s.status === 'available').length,
+    motoDispatched: Object.entries(vehicleStates).filter(([id, s]) => id.includes('MOTO') && s.status !== 'available').length,
+    utilization: 0,
+  };
+  resourceStats.utilization = (resourceStats.ambDispatched + resourceStats.motoDispatched) /
+                              (resourceStats.ambTotal + resourceStats.motoTotal);
+
+  // 시나리오 선택
+  const handleSelectScenario = (scenario) => {
+    handleStop();
+    setCurrentScenario(scenario);
+  };
+
+  // 재생/일시정지
+  const handlePlayPause = () => {
+    if (!currentScenario) return;
+    setIsPlaying(prev => !prev);
+  };
+
+  // 정지 (초기화)
+  const handleStop = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setLogs([]);
+    setIncidents([]);
+    setActiveIncidents([]);
+    setSignalStates({});
+    setPoolLevel(1);
+    // 차량 상태 초기화
+    const initial = {};
+    [...AMBULANCES, ...MOTORCYCLES].forEach(v => {
+      initial[v.id] = { lat: v.lat, lng: v.lng, status: 'available', origin: { lat: v.lat, lng: v.lng } };
+    });
+    setVehicleStates(initial);
+  };
+
+  // 시간 진행 루프
+  useEffect(() => {
+    if (!isPlaying || !currentScenario) return;
+    const interval = setInterval(() => {
+      setCurrentTime(t => {
+        const next = t + 1;
+        if (next > currentScenario.duration) {
+          setIsPlaying(false);
+          return currentScenario.duration;
+        }
+        return next;
+      });
+    }, 1000 / speed);
+    return () => clearInterval(interval);
+  }, [isPlaying, currentScenario, speed]);
+
+  // 시간 변화에 따른 이벤트 처리
+  useEffect(() => {
+    if (!currentScenario) return;
+    const events = currentScenario.events.filter(e => e.time === currentTime);
+    if (events.length === 0) return;
+
+    events.forEach(event => {
+      // 로그 추가
+      if (event.message) {
+        setLogs(prev => [...prev, { time: event.time, message: event.message, detail: event.detail }]);
+      }
+
+      // 신고 발생
+      if (event.type === 'INCIDENT') {
+        if (event.location) {
+          setIncidents(prev => [...prev, event.location]);
+          setActiveIncidents(prev => [...prev, { district: event.location.district, ktas: event.ktas }]);
+        }
+      }
+
+      // 차량 디스패치
+      if (event.type === 'DISPATCH' && event.vehicleId && event.destination) {
+        setVehicleStates(prev => ({
+          ...prev,
+          [event.vehicleId]: {
+            ...prev[event.vehicleId],
+            status: 'dispatched',
+            destination: event.destination,
+            dispatchTime: event.time,
+          }
+        }));
+      }
+
+      // 차량 비활성화 (대기 해제)
+      if (event.type === 'DEACTIVATE' && event.vehicleId) {
+        setVehicleStates(prev => {
+          const v = AMBULANCES.find(a => a.id === event.vehicleId) ||
+                    MOTORCYCLES.find(m => m.id === event.vehicleId);
+          return {
+            ...prev,
+            [event.vehicleId]: {
+              ...prev[event.vehicleId],
+              status: 'available',
+              lat: v.lat,
+              lng: v.lng,
+            }
+          };
+        });
+      }
+
+      // 신호등 우선신호
+      if (event.type === 'SIGNAL_PRIORITY' && event.signalId) {
+        setSignalStates(prev => ({ ...prev, [event.signalId]: 'priority' }));
+      }
+      if (event.type === 'SIGNAL_REVERT' && event.signalId) {
+        setSignalStates(prev => ({ ...prev, [event.signalId]: 'normal' }));
+      }
+
+      // 자원 풀 레벨
+      if (event.type === 'POOL_LEVEL_UP') {
+        setPoolLevel(event.level);
+      }
+
+      // 이송 시작
+      if (event.type === 'TRANSPORT' && event.vehicleId) {
+        setVehicleStates(prev => ({
+          ...prev,
+          [event.vehicleId]: { ...prev[event.vehicleId], status: 'transporting' }
+        }));
+      }
+
+      // 도착
+      if (event.type === 'ARRIVE_HOSPITAL' && event.hospitalId) {
+        const hospital = HOSPITALS.find(h => h.id === event.hospitalId);
+        if (hospital) {
+          // 이송 중 차량들을 병원으로
+          setVehicleStates(prev => {
+            const updated = { ...prev };
+            Object.keys(updated).forEach(id => {
+              if (updated[id].status === 'transporting') {
+                updated[id] = { ...updated[id], lat: hospital.lat, lng: hospital.lng };
+              }
+            });
+            return updated;
+          });
+        }
+      }
+    });
+  }, [currentTime, currentScenario]);
+
+  // 차량 위치 보간 애니메이션 (출동 중인 차량들을 목적지로 이동)
+  useEffect(() => {
+    if (!isPlaying || !currentScenario) return;
+    const moveDuration = 30; // 출동 후 30초 동안 이동
+
+    setVehicleStates(prev => {
+      const updated = { ...prev };
+      Object.entries(updated).forEach(([id, state]) => {
+        if (state.status === 'dispatched' && state.destination && state.dispatchTime !== undefined) {
+          const elapsed = currentTime - state.dispatchTime;
+          const progress = Math.min(1, elapsed / moveDuration);
+          const newPos = interpolate(state.origin, state.destination, progress);
+          updated[id] = { ...state, lat: newPos.lat, lng: newPos.lng };
+          if (progress >= 1 && state.status === 'dispatched') {
+            updated[id].status = 'transporting';
+          }
+        }
+      });
+      return updated;
+    });
+  }, [currentTime]);
+
+  // 사용자 직접 신고
+  const handleCustomReport = (data) => {
+    handleStop();
+    // 즉시 동적 시나리오 생성
+    const customScenario = {
+      id: 99,
+      title: `직접 신고 - ${data.district} ${data.ktas}급`,
+      description: `사용자 직접 신고: "${data.keyword}"`,
+      duration: 40,
+      events: [
+        { time: 0, type: 'INCIDENT', message: `📞 직접 신고: "${data.keyword}"`,
+          location: { ...data.location, district: data.district }, ktas: data.ktas },
+        { time: 1, type: 'STT_START', message: '🎙️ STT 분석 시작' },
+        ...(data.ktas === 1 ? [
+          { time: 2, type: 'KEYWORD_TRIGGER', message: `🚨 [Layer 1] 1급 키워드 감지 → 즉시 출동` },
+        ] : [
+          { time: 3, type: 'AI_CLASSIFY', message: `🤖 AI 분류: ${data.ktas}급` },
+        ]),
+        // 가용 차량 자동 선택
+        ...(() => {
+          const ambs = AMBULANCES.filter(a => a.district === data.district);
+          const motos = MOTORCYCLES.filter(m => m.district === data.district);
+          const events = [];
+          if (ambs.length > 0) {
+            events.push({ time: 3, type: 'DISPATCH', message: `🚑 ${ambs[0].id} 출동`,
+              vehicleId: ambs[0].id, destination: data.location });
+          }
+          if (data.ktas <= 2 && motos.length > 0) {
+            events.push({ time: 3, type: 'DISPATCH', message: `🏍️ ${motos[0].id} 출동`,
+              vehicleId: motos[0].id, destination: data.location });
+          }
+          if (data.ktas === 1 && motos.length > 1) {
+            events.push({ time: 3, type: 'DISPATCH', message: `🏍️ ${motos[1].id} 출동 (후미)`,
+              vehicleId: motos[1].id, destination: data.location });
+          }
+          return events;
+        })(),
+        { time: 35, type: 'COMPLETE', message: '✅ 직접 신고 처리 완료' },
+      ]
+    };
+    setCurrentScenario(customScenario);
+    setIsPlaying(true);
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-900">
+      {/* 헤더 */}
+      <header className="bg-gray-800 border-b border-gray-700 px-6 py-3 flex justify-between items-center">
+        <div>
+          <h1 className="text-xl font-bold text-white">
+            🚑 응급구조 통합 시스템 시뮬레이터
+          </h1>
+          <p className="text-xs text-gray-400">부산 광역시 — 모두의 창업 데모</p>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-gray-400">현재 시나리오</div>
+          <div className="text-sm font-bold text-cyan-400">
+            {currentScenario ? currentScenario.title : '선택되지 않음'}
+          </div>
+        </div>
+      </header>
+
+      {/* 본문 (3분할) */}
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar
+          resourceStats={resourceStats}
+          activeIncidents={activeIncidents}
+          poolLevel={poolLevel}
+          currentTime={currentTime}
+        />
+        <div className="flex-1 relative">
+          <KakaoMap
+            vehicleStates={vehicleStates}
+            signalStates={signalStates}
+            incidents={incidents}
+            hospitals={HOSPITALS}
+          />
+        </div>
+        <LogPanel logs={logs} />
+      </div>
+
+      {/* 하단 컨트롤 */}
+      <Controls
+        scenarios={SCENARIOS}
+        currentScenario={currentScenario}
+        isPlaying={isPlaying}
+        speed={speed}
+        onSelect={handleSelectScenario}
+        onPlayPause={handlePlayPause}
+        onStop={handleStop}
+        onSpeedChange={setSpeed}
+        onCustomReport={() => setShowReportModal(true)}
+      />
+
+      {/* 직접 신고 모달 */}
+      <CustomReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        onSubmit={handleCustomReport}
+      />
+    </div>
+  );
+}
+
+// 렌더링
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+
+  </script>
+</body>
+</html>
